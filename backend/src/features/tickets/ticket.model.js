@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-export const STATUS_ENUM = ['Open', 'In Progress', 'Waiting on Customer', 'Resolved'];
+export const STATUS_ENUM = ['Open', 'Assigned', 'In Progress', 'Waiting on Customer', 'Resolved'];
 export const PRIORITY_ENUM = ['Low', 'Medium', 'High', 'Urgent'];
 
 const ticketSchema = new mongoose.Schema(
@@ -45,6 +45,11 @@ const ticketSchema = new mongoose.Schema(
       default: 'Unassigned',
       trim: true,
       index: true,
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Agent',
+      default: null,
     },
   },
   {

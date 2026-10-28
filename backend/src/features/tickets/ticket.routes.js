@@ -5,6 +5,7 @@ import {
   createTicket,
   updateTicket,
   deleteTicket,
+  confirmResolution,
 } from './ticket.controller.js';
 import commentRoutes from '../comments/comment.routes.js';
 import activityRoutes from '../activities/activity.routes.js';
@@ -22,5 +23,6 @@ router.post('/', createTicket);
 router.patch('/:id', updateTicket);
 router.put('/:id', updateTicket);
 router.delete('/:id', deleteTicket);
+router.post('/:id/confirm-resolution', confirmResolution);
 
 export default router;

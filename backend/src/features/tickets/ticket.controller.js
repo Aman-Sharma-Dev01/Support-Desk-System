@@ -29,11 +29,37 @@ export const getTickets = async (req, res, next) => {
     } = req.query;
 
     const query = {};
+    const userOwnerMatches = [];
+
+    if (req.agent && req.agent.role === 'User') {
+      userOwnerMatches.push({ createdBy: req.agent.id });
+      const userEmail = (req.agent.email || '').toLowerCase();
+      const userName = (req.agent.name || '').toLowerCase();
+
+      if (userEmail) {
+        userOwnerMatches.push({ customer: { $regex: userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } });
+      }
+      if (userName) {
+        userOwnerMatches.push({ customer: { $regex: userName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } });
+      }
+    }
 
     // 1. Search by subject or customer name/email
+    let searchFilter = null;
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim(), 'i');
-      query.$or = [{ subject: searchRegex }, { customer: searchRegex }];
+      searchFilter = [{ subject: searchRegex }, { customer: searchRegex }];
+    }
+
+    if (userOwnerMatches.length > 0) {
+      const ownerFilter = { $or: userOwnerMatches };
+      if (searchFilter) {
+        query.$and = [ownerFilter, { $or: searchFilter }];
+      } else {
+        query.$or = ownerFilter.$or;
+      }
+    } else if (searchFilter) {
+      query.$or = searchFilter;
     }
 
     // 2. Filter by status
@@ -73,7 +99,7 @@ export const getTickets = async (req, res, next) => {
       } else if (typeof query.status === 'string') {
         // Keep existing status filter only if it's not 'Resolved'
         if (query.status === 'Resolved') {
-          // Resolved + overdue is contradictory — return empty
+          // Resolved + overdue is contradictory â€” return empty
           return res.json({ success: true, total: 0, data: [] });
         }
       } else if (query.status.$in) {
@@ -173,6 +199,22 @@ export const getTicketById = async (req, res, next) => {
       });
     }
 
+    if (req.agent && req.agent.role === 'User') {
+      const userEmail = (req.agent.email || '').toLowerCase();
+      const userName = (req.agent.name || '').toLowerCase();
+      const ticketCustomer = (ticket.customer || '').toLowerCase();
+      const isOwner =
+        (ticket.createdBy && ticket.createdBy.toString() === req.agent.id.toString()) ||
+        ticketCustomer.includes(userEmail) ||
+        ticketCustomer.includes(userName);
+      if (!isOwner) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden — You can only view your own tickets',
+        });
+      }
+    }
+
     res.json({
       success: true,
       data: ticket,
@@ -191,7 +233,7 @@ export const createTicket = async (req, res, next) => {
     if (!subject || !subject.trim()) {
       return res.status(400).json({ success: false, error: 'Subject is required' });
     }
-    if (!customer || !customer.trim()) {
+    if ((!req.agent || req.agent.role !== 'User') && (!customer || !customer.trim())) {
       return res.status(400).json({ success: false, error: 'Customer name or email is required' });
     }
     if (!description || !description.trim()) {
@@ -204,20 +246,42 @@ export const createTicket = async (req, res, next) => {
       return res.status(400).json({ success: false, error: `Invalid priority: ${priority}` });
     }
 
+    let finalCustomer = customer ? String(customer).trim() : '';
+    let finalStatus = status || 'Open';
+    let finalPriority = priority || 'Medium';
+    let finalAssignee = assignee ? String(assignee).trim() : 'Unassigned';
+
+    if (req.agent && req.agent.role === 'User') {
+      finalCustomer = `${req.agent.name} (${req.agent.email})`;
+      finalStatus = 'Open';
+      finalAssignee = 'Unassigned';
+    } else if (req.agent) {
+      const tAss = String(finalAssignee).toLowerCase();
+      if (tAss === 'self' || tAss === 'me') {
+        finalAssignee = req.agent.name;
+      }
+      if (finalAssignee && finalAssignee !== 'Unassigned' && finalStatus === 'Open') {
+        finalStatus = 'Assigned';
+      }
+    }
+
+    const performedBy = req.agent ? req.agent.name : (createdBy || finalCustomer);
+
     const ticket = await Ticket.create({
       subject: subject.trim(),
-      customer: customer.trim(),
+      customer: finalCustomer,
       description: description.trim(),
-      priority: priority || 'Medium',
-      status: status || 'Open',
-      assignee: assignee ? assignee.trim() : 'Unassigned',
+      priority: finalPriority,
+      status: finalStatus,
+      assignee: finalAssignee,
+      createdBy: req.agent ? req.agent.id : null,
     });
 
     // Record creation in Activity history
     await logActivity({
       ticketId: ticket._id,
       action: 'CREATED',
-      performedBy: createdBy || customer.trim(),
+      performedBy,
       message: `Ticket created with ${ticket.priority} priority`,
     });
 
@@ -237,7 +301,15 @@ export const updateTicket = async (req, res, next) => {
     if (!isValidObjectId(id)) {
       return res.status(400).json({ success: false, error: 'Invalid ticket ID format' });
     }
-    const { subject, description, customer, status, priority, assignee, updatedBy = 'Support Agent' } = req.body;
+    if (req.agent && req.agent.role === 'User') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden ï¿½?" Regular users cannot edit ticket fields. Use comments to reply.',
+      });
+    }
+
+    const { subject, description, customer, status, priority, assignee } = req.body;
+    const updatedBy = req.agent ? req.agent.name : 'Support Agent';
 
     const ticket = await Ticket.findById(id);
     if (!ticket) {
@@ -279,17 +351,67 @@ export const updateTicket = async (req, res, next) => {
     }
 
     // Track assignee change
-    if (assignee !== undefined && assignee !== ticket.assignee) {
-      const newAssignee = assignee ? assignee.trim() : 'Unassigned';
-      activitiesToLog.push({
-        action: 'ASSIGNEE_CHANGED',
-        field: 'assignee',
-        oldValue: ticket.assignee,
-        newValue: newAssignee,
-        performedBy: updatedBy,
-        message: `Assignee changed from "${ticket.assignee}" to "${newAssignee}"`,
-      });
-      ticket.assignee = newAssignee;
+    if (assignee !== undefined) {
+      let newAssignee = assignee;
+      if (typeof newAssignee === 'string') {
+        const trimmed = newAssignee.trim();
+        if (trimmed.toLowerCase() === 'self' || trimmed.toLowerCase() === 'me') {
+          newAssignee = req.agent ? req.agent.name : trimmed;
+        } else if (req.agent && trimmed.toLowerCase() === req.agent.name.toLowerCase()) {
+          newAssignee = req.agent.name;
+        } else {
+          newAssignee = trimmed;
+        }
+      } else if (newAssignee === null) {
+        newAssignee = 'Unassigned';
+      }
+
+      if (newAssignee !== ticket.assignee) {
+        if (req.agent && req.agent.role !== 'Admin' && newAssignee !== req.agent.name && newAssignee !== 'Unassigned') {
+          return res.status(403).json({
+            success: false,
+            error: 'Agents can only assign tickets to themselves. Admin access is required to assign to others.',
+          });
+        }
+
+        activitiesToLog.push({
+          action: 'ASSIGNEE_CHANGED',
+          field: 'assignee',
+          oldValue: ticket.assignee,
+          newValue: newAssignee,
+          performedBy: updatedBy,
+          message: `Assignee changed from "${ticket.assignee}" to "${newAssignee}"`,
+        });
+        ticket.assignee = newAssignee;
+
+        if (newAssignee && newAssignee !== 'Unassigned') {
+          if (ticket.status === 'Open' || ticket.status === 'Assigned') {
+            if (ticket.status !== 'Assigned') {
+              activitiesToLog.push({
+                action: 'STATUS_CHANGED',
+                field: 'status',
+                oldValue: ticket.status,
+                newValue: 'Assigned',
+                performedBy: updatedBy,
+                message: `Status updated from "${ticket.status}" to "Assigned"`,
+              });
+              ticket.status = 'Assigned';
+            }
+          }
+        } else if (newAssignee === 'Unassigned') {
+          if (ticket.status === 'Assigned') {
+            activitiesToLog.push({
+              action: 'STATUS_CHANGED',
+              field: 'status',
+              oldValue: ticket.status,
+              newValue: 'Open',
+              performedBy: updatedBy,
+              message: `Status updated from "${ticket.status}" to "Open"`,
+            });
+            ticket.status = 'Open';
+          }
+        }
+      }
     }
 
     // Subject or description updates
@@ -336,9 +458,15 @@ export const updateTicket = async (req, res, next) => {
   }
 };
 
-// DELETE /api/tickets/:id - Delete ticket and cascade delete comments and activities
+// DELETE /api/tickets/:id - Admin only: Delete ticket and cascade delete comments and activities
 export const deleteTicket = async (req, res, next) => {
   try {
+    if (req.agent && req.agent.role !== 'Admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden — Admin access required to delete tickets',
+      });
+    }
     const { id } = req.params;
     if (!isValidObjectId(id)) {
       return res.status(400).json({ success: false, error: 'Invalid ticket ID format' });
@@ -357,6 +485,79 @@ export const deleteTicket = async (req, res, next) => {
     res.json({
       success: true,
       message: 'Ticket and all related comments and activities deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// POST /api/tickets/:id/confirm-resolution - Customer confirms or reopens ticket
+export const confirmResolution = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid ticket ID format' });
+    }
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: 'Ticket not found' });
+    }
+
+    if (req.agent && req.agent.role === 'User') {
+      const userEmail = (req.agent.email || '').toLowerCase();
+      const userName = (req.agent.name || '').toLowerCase();
+      const ticketCustomer = (ticket.customer || '').toLowerCase();
+      const isOwner =
+        (ticket.createdBy && ticket.createdBy.toString() === req.agent.id.toString()) ||
+        ticketCustomer.includes(userEmail) ||
+        ticketCustomer.includes(userName);
+      if (!isOwner) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden — You can only confirm resolution on your own tickets',
+        });
+      }
+    }
+
+    const { resolved, feedback } = req.body;
+    const oldStatus = ticket.status;
+    const authorName = req.agent ? req.agent.name : 'Customer';
+
+    if (resolved === true) {
+      ticket.status = 'Resolved';
+      await ticket.save();
+
+      await logActivity({
+        ticketId: ticket._id,
+        action: 'STATUS_CHANGED',
+        field: 'status',
+        oldValue: oldStatus,
+        newValue: 'Resolved',
+        performedBy: authorName,
+        message: feedback
+          ? `Customer confirmed issue is resolved: "${feedback}"`
+          : 'Customer confirmed ticket is resolved',
+      });
+    } else {
+      ticket.status = 'In Progress';
+      await ticket.save();
+
+      await logActivity({
+        ticketId: ticket._id,
+        action: 'STATUS_CHANGED',
+        field: 'status',
+        oldValue: oldStatus,
+        newValue: 'In Progress',
+        performedBy: authorName,
+        message: feedback
+          ? `Customer reported issue is NOT resolved: "${feedback}"`
+          : 'Customer reported issue is not resolved. Ticket reopened.',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: ticket,
     });
   } catch (error) {
     next(error);
