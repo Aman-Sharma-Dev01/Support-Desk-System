@@ -1,4 +1,6 @@
-const BASE_URL = '/api';
+const API_ROOT = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api`
+  : '/api';
 
 /**
  * Enhanced fetch wrapper with auto-auth headers and unified error handling
@@ -16,7 +18,7 @@ export async function apiRequest(endpoint, options = {}) {
     headers,
   };
 
-  const response = await fetch(`${BASE_URL}${endpoint}`, config);
+  const response = await fetch(`${API_ROOT}${endpoint}`, config);
 
   if (response.status === 401 && !endpoint.includes('/auth/login')) {
     localStorage.removeItem('token');
