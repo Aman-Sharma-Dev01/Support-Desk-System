@@ -17,12 +17,12 @@ router.use('/:ticketId/comments', commentRoutes);
 router.use('/:ticketId/activities', activityRoutes);
 
 // Base ticket endpoints
+router.post('/:id/confirm-resolution', confirmResolution);
 router.get('/', getTickets);
 router.get('/:id', getTicketById);
 router.post('/', createTicket);
 router.patch('/:id', updateTicket);
 router.put('/:id', updateTicket);
 router.delete('/:id', deleteTicket);
-router.post('/:id/confirm-resolution', confirmResolution);
 
 export default router;

@@ -29,6 +29,11 @@ const commentSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    authorRole: {
+      type: String,
+      enum: ['Admin', 'Agent', 'User'],
+      default: 'User',
+    },
   },
   {
     timestamps: true,

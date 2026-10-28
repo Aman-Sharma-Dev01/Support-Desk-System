@@ -425,7 +425,14 @@ export default function TicketDetailPage() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', marginBottom: '28px' }}>
                 {comments.map((c) => {
-                  const isStaffAuthor = c.type === 'note' || (c.authorEmail && c.authorEmail.includes('@supportdesk'));
+                  const isAgent = c.authorRole === 'Agent' || (!c.authorRole && ticket.assignee && c.authorName === ticket.assignee);
+                  const isAdmin = c.authorRole === 'Admin';
+                  const isCustomer = c.authorRole === 'User' || (!c.authorRole && ticket.customer && ticket.customer.includes(c.authorName));
+                  const isStaff = isAgent || isAdmin || c.type === 'note';
+
+                  const avatarBg = c.type === 'note' ? '#fde68a' : (isAdmin ? '#fdf2f8' : (isAgent ? 'var(--brand-light)' : '#eff6ff'));
+                  const avatarColor = c.type === 'note' ? '#92400e' : (isAdmin ? '#9d174d' : (isAgent ? 'var(--brand)' : '#1d4ed8'));
+
                   return (
                     <div
                       key={c._id}
@@ -443,8 +450,8 @@ export default function TicketDetailPage() {
                             width: '32px',
                             height: '32px',
                             borderRadius: '50%',
-                            backgroundColor: c.type === 'note' ? '#fde68a' : (isStaffAuthor ? 'var(--brand-light)' : '#eff6ff'),
-                            color: c.type === 'note' ? '#92400e' : (isStaffAuthor ? 'var(--brand)' : '#1d4ed8'),
+                            backgroundColor: avatarBg,
+                            color: avatarColor,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
@@ -472,19 +479,39 @@ export default function TicketDetailPage() {
                                 }}>
                                   <Lock size={11} /> Internal Note
                                 </span>
+                              ) : isAdmin ? (
+                                <span style={{
+                                  fontSize: '0.7rem',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#fdf2f8',
+                                  color: '#9d174d',
+                                  fontWeight: 700,
+                                }}>
+                                  Admin
+                                </span>
+                              ) : isAgent ? (
+                                <span style={{
+                                  fontSize: '0.7rem',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: 'var(--brand-light)',
+                                  color: 'var(--brand)',
+                                  fontWeight: 700,
+                                }}>
+                                  Support Agent
+                                </span>
                               ) : (
-                                isStaffAuthor && (
-                                  <span style={{
-                                    fontSize: '0.7rem',
-                                    padding: '2px 8px',
-                                    borderRadius: '4px',
-                                    backgroundColor: 'var(--brand-light)',
-                                    color: 'var(--brand)',
-                                    fontWeight: 700,
-                                  }}>
-                                    Support Agent
-                                  </span>
-                                )
+                                <span style={{
+                                  fontSize: '0.7rem',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: '#eff6ff',
+                                  color: '#1d4ed8',
+                                  fontWeight: 700,
+                                }}>
+                                  Customer
+                                </span>
                               )}
                             </div>
                             <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>

@@ -106,6 +106,7 @@ export const addComment = async (req, res, next) => {
       content: content.trim(),
       authorName: finalAuthorName,
       authorEmail: finalAuthorEmail,
+      authorRole: req.agent ? req.agent.role : 'User',
     });
 
     // Touch ticket updatedAt
